@@ -8,12 +8,13 @@ Interface graphique locale pour transcrire des fichiers audio en texte, basée s
 
 ## ✨ Fonctionnalités
 
-- 🖱️ **Glisser-déposer** de fichiers audio directement dans la fenêtre
-- 📂 **Bouton Parcourir** pour sélectionner un fichier
+- 🖱️ **Glisser-déposer** d'un ou plusieurs fichiers audio en une fois
+- 📂 **Bouton Parcourir** pour sélectionner un ou plusieurs fichiers (multi-sélection)
+- 📦 **Mode batch** : traitement séquentiel de tous les fichiers, sauvegarde automatique d'un `.txt` par fichier (même nom, même dossier)
+- 📋 **Liste scrollable** des fichiers chargés avec compteur et bouton "Vider la liste"
 - 🌍 **Multi-langues** : Français, Anglais, Espagnol, Allemand, Italien, Portugais, Néerlandais, Auto-détection
 - 🧠 **Choix du modèle** : tiny / base / small / medium / large
-- 📋 **Copier** le texte en un clic
-- 💾 **Sauvegarder** la transcription en `.txt`
+- 📊 **Log de progression** en temps réel (fichier X/N, mots détectés, résumé final)
 - 🎨 Interface sombre moderne (dark theme)
 
 ## 🖥️ Formats audio supportés
@@ -49,10 +50,18 @@ python whisper_gui.py
 
 ## 🚀 Utilisation
 
-1. Glissez-déposez votre fichier audio dans la zone dédiée (ou cliquez **Parcourir**)
+### Fichier unique
+1. Glissez-déposez un fichier audio dans la zone dédiée (ou cliquez **Parcourir**)
 2. Sélectionnez le modèle et la langue
 3. Cliquez **Lancer la transcription**
-4. Copiez ou sauvegardez le résultat
+4. Un fichier `.txt` est automatiquement créé à côté du fichier audio
+
+### Mode batch
+1. Glissez-déposez **plusieurs fichiers** d'un coup (ou Parcourir avec multi-sélection)
+2. La liste des fichiers s'affiche — vous pouvez en ajouter d'autres par vagues
+3. Sélectionnez le modèle et la langue, puis cliquez **Lancer la transcription**
+4. Chaque fichier est traité séquentiellement, un `.txt` est créé automatiquement pour chacun
+5. Le log affiche la progression en temps réel et un résumé final
 
 ### Choix du modèle
 
@@ -66,9 +75,11 @@ python whisper_gui.py
 
 ## 📝 Notes
 
-- Le modèle est téléchargé automatiquement au premier lancement (~140 Mo pour `base`)
+- Le modèle est téléchargé automatiquement au premier lancement (~140 Mo pour `base`, ~1.5 Go pour `medium`)
+- Les modèles sont mis en cache dans `~/.cache/whisper/` et réutilisés lors des lancements suivants
 - Le warning `FP16 is not supported on CPU` est supprimé automatiquement (comportement normal sans GPU)
 - Fonctionne entièrement hors-ligne après le premier téléchargement du modèle
+- En mode batch, le modèle n'est chargé qu'une seule fois pour tous les fichiers
 
 ## 📄 Licence
 
