@@ -1,5 +1,12 @@
 import sys, os
 
+# Pas de console (ex: lance via pythonw) -> stdout/stderr valent None, ce qui fait planter
+# tqdm (utilise par whisper.transcribe) des son premier appel a .write().
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w")
+
 # S'assurer que les packages utilisateur sont dans le path (fix tkinterdnd2)
 _user_site = os.path.join(os.environ.get("APPDATA",""), "Python", "Python314", "site-packages")
 if _user_site not in sys.path:
@@ -7,7 +14,7 @@ if _user_site not in sys.path:
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-import threading, warnings
+import threading, warnings, subprocess
 
 try:
     from tkinterdnd2 import TkinterDnD, DND_FILES
@@ -24,6 +31,8 @@ FONT_TITLE=("Segoe UI",22,"bold"); FONT_SUB=("Segoe UI",10)
 FONT_LABEL=("Segoe UI",9,"bold"); FONT_BODY=("Segoe UI",10)
 FONT_MONO=("Consolas",10); FONT_BTN=("Segoe UI",10,"bold")
 AUDIO_EXT={".mp3",".wav",".m4a",".ogg",".flac",".aac",".wma",".opus"}
+VIDEO_EXT={".mp4",".mkv",".mov",".avi",".webm",".flv",".wmv",".m4v"}
+MEDIA_EXT=AUDIO_EXT|VIDEO_EXT
 
 BASE = TkinterDnD.Tk if DND_AVAILABLE else tk.Tk
 
@@ -58,7 +67,8 @@ class WhisperApp(BASE):
         self.audio_paths=[]  # liste de fichiers (batch)
         self.model_var=tk.StringVar(value="base")
         self.lang_var=tk.StringVar(value="French")
-        self.status_var=tk.StringVar(value="En attente de fichiers audio...")
+        self.mode_var=tk.StringVar(value="Extraire puis transcrire")
+        self.status_var=tk.StringVar(value="En attente de fichiers audio ou video...")
         self.is_running=False
         self._build_ui(); self._center_window()
 
@@ -69,7 +79,7 @@ class WhisperApp(BASE):
         tk.Frame(self,bg=ACCENT,height=2).pack(fill="x")
         main=tk.Frame(self,bg=BG,padx=30,pady=20); main.pack(fill="both",expand=True)
         self._build_drop_zone(main); self._build_options(main)
-        self.btn=tk.Button(main,text="Lancer la transcription",font=FONT_BTN,bg=ACCENT,fg="white",
+        self.btn=tk.Button(main,text="Lancer",font=FONT_BTN,bg=ACCENT,fg="white",
             activebackground=ACCENT2,activeforeground="white",bd=0,padx=24,pady=12,cursor="hand2",command=self._start)
         self.btn.pack(fill="x",pady=(8,16))
         s=ttk.Style(self); s.theme_use("default")
@@ -88,7 +98,7 @@ class WhisperApp(BASE):
         top=tk.Frame(self.df,bg=SURFACE2); top.pack(fill="x")
         self.di=tk.Label(top,text="(( audio ))",font=("Segoe UI",13,"bold"),bg=SURFACE2,fg=ACCENT)
         self.di.pack(side="left")
-        dnd_text = "  Glissez vos fichiers ici  |  MP3, WAV, M4A, OGG..." if DND_AVAILABLE else "  Cliquez Parcourir pour selectionner des fichiers"
+        dnd_text = "  Glissez vos fichiers ici  |  MP3, WAV, M4A, MP4, MKV..." if DND_AVAILABLE else "  Cliquez Parcourir pour selectionner des fichiers"
         self.dt=tk.Label(top,text=dnd_text,font=FONT_SUB,bg=SURFACE2,fg=TEXT_DIM)
         self.dt.pack(side="left",padx=(8,0))
         tk.Button(top,text="Parcourir...",font=FONT_BTN,bg=SURFACE,fg=TEXT,
@@ -123,6 +133,9 @@ class WhisperApp(BASE):
 
     def _build_options(self,parent):
         row=tk.Frame(parent,bg=BG); row.pack(fill="x",pady=(0,10))
+        c0=tk.Frame(row,bg=BG); c0.pack(side="left",fill="x",expand=True,padx=(0,12))
+        tk.Label(c0,text="ETAPES",font=FONT_LABEL,bg=BG,fg=TEXT_DIM).pack(anchor="w")
+        ttk.Combobox(c0,textvariable=self.mode_var,values=["Transcrire seulement","Extraire seulement","Extraire puis transcrire"],state="readonly",font=FONT_BODY,width=20).pack(anchor="w",pady=(4,0))
         c1=tk.Frame(row,bg=BG); c1.pack(side="left",fill="x",expand=True,padx=(0,12))
         tk.Label(c1,text="MODELE",font=FONT_LABEL,bg=BG,fg=TEXT_DIM).pack(anchor="w")
         ttk.Combobox(c1,textvariable=self.model_var,values=["tiny","base","small","medium","large"],state="readonly",font=FONT_BODY,width=16).pack(anchor="w",pady=(4,0))
@@ -150,8 +163,8 @@ class WhisperApp(BASE):
     def _on_drop(self,e):
         self._on_leave(e)
         paths = parse_drop_paths(e.data)
-        valid = [p for p in paths if os.path.isfile(p) and os.path.splitext(p)[1].lower() in AUDIO_EXT]
-        invalid = [p for p in paths if os.path.splitext(p)[1].lower() not in AUDIO_EXT]
+        valid = [p for p in paths if os.path.isfile(p) and os.path.splitext(p)[1].lower() in MEDIA_EXT]
+        invalid = [p for p in paths if os.path.splitext(p)[1].lower() not in MEDIA_EXT]
         if invalid:
             messagebox.showwarning("Format non supporte",
                 f"{len(invalid)} fichier(s) ignore(s) (format non reconnu).")
@@ -165,8 +178,11 @@ class WhisperApp(BASE):
         self.geometry(f"+{(sw-w)//2}+{(sh-h)//2}")
 
     def _browse(self):
-        paths=filedialog.askopenfilenames(title="Choisir un ou plusieurs fichiers audio",
-            filetypes=[("Fichiers audio","*.mp3 *.wav *.m4a *.ogg *.flac *.aac *.wma *.opus"),("Tous","*.*")])
+        paths=filedialog.askopenfilenames(title="Choisir un ou plusieurs fichiers audio ou video",
+            filetypes=[("Audio et video","*.mp3 *.wav *.m4a *.ogg *.flac *.aac *.wma *.opus *.mp4 *.mkv *.mov *.avi *.webm *.flv *.wmv *.m4v"),
+                       ("Fichiers audio","*.mp3 *.wav *.m4a *.ogg *.flac *.aac *.wma *.opus"),
+                       ("Fichiers video","*.mp4 *.mkv *.mov *.avi *.webm *.flv *.wmv *.m4v"),
+                       ("Tous","*.*")])
         if paths:
             self._load_batch(list(paths))
 
@@ -184,7 +200,7 @@ class WhisperApp(BASE):
             self.file_listbox.insert("end", f"  {i+1:>2}.  {os.path.basename(p)}")
         label = f"{n} fichier(s) charge(s)" if n > 0 else "Aucun fichier charge"
         self.fn.configure(text=label, fg=SUCCESS if n > 0 else TEXT_DIM)
-        self._setstatus(f"{n} fichier(s) charge(s), pret a lancer." if n > 0 else "En attente de fichiers audio...", TEXT_DIM)
+        self._setstatus(f"{n} fichier(s) charge(s), pret a lancer." if n > 0 else "En attente de fichiers audio ou video...", TEXT_DIM)
 
     def _clear_files(self):
         self.audio_paths = []
@@ -205,7 +221,7 @@ class WhisperApp(BASE):
 
     def _start(self):
         if not self.audio_paths:
-            messagebox.showwarning("Fichiers manquants","Selectionnez ou deposez des fichiers audio."); return
+            messagebox.showwarning("Fichiers manquants","Selectionnez ou deposez des fichiers audio ou video."); return
         missing = [p for p in self.audio_paths if not os.path.isfile(p)]
         if missing:
             messagebox.showerror("Introuvable", f"{len(missing)} fichier(s) introuvable(s).\nVerifiez les chemins."); return
@@ -213,40 +229,64 @@ class WhisperApp(BASE):
         self.is_running=True
         self.btn.configure(state="disabled",bg=SURFACE2,fg=TEXT_DIM,text="Batch en cours...")
         self.prog.configure(mode="determinate", value=0, maximum=len(self.audio_paths))
-        self._setstatus("Chargement du modele...",ACCENT2)
+        self._setstatus("Demarrage du batch...",ACCENT2)
         self._clear_log()
-        threading.Thread(target=self._whisper_batch, daemon=True).start()
+        threading.Thread(target=self._process_batch, daemon=True).start()
 
-    def _whisper_batch(self):
+    def _extract_audio(self, path):
+        """Extrait la piste audio d'une video vers un MP3 sibling via ffmpeg."""
+        out_path = os.path.splitext(path)[0] + ".mp3"
+        cmd = ["ffmpeg", "-y", "-i", path, "-vn", "-acodec", "libmp3lame", "-q:a", "2", out_path]
+        flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        result = subprocess.run(cmd, capture_output=True, creationflags=flags)
+        if result.returncode != 0:
+            raise RuntimeError(f"ffmpeg a echoue : {result.stderr.decode(errors='ignore')[-300:]}")
+        return out_path
+
+    def _process_batch(self):
         paths = self.audio_paths
+        mode = self.mode_var.get()
+        do_extract = mode in ("Extraire seulement", "Extraire puis transcrire")
+        do_transcribe = mode in ("Transcrire seulement", "Extraire puis transcrire")
         model_name = self.model_var.get()
         lang = self.lang_var.get()
         n = len(paths)
         try:
-            warnings.filterwarnings("ignore", message="FP16 is not supported on CPU")
-            import whisper, ssl
-            # Fix SSL certificate verify failed sur certains environnements Windows
-            ssl._create_default_https_context = ssl._create_unverified_context
-            self.after(0, self._setstatus, f"Chargement du modele '{model_name}'...", ACCENT2)
-            model = whisper.load_model(model_name)
-            self.after(0, self._log, f"Modele '{model_name}' charge. {n} fichier(s) a traiter.\n{'='*50}")
+            model = None
+            if do_transcribe:
+                warnings.filterwarnings("ignore", message="FP16 is not supported on CPU")
+                import whisper, ssl
+                # Fix SSL certificate verify failed sur certains environnements Windows
+                ssl._create_default_https_context = ssl._create_unverified_context
+                self.after(0, self._setstatus, f"Chargement du modele '{model_name}'...", ACCENT2)
+                model = whisper.load_model(model_name)
+            self.after(0, self._log, f"{n} fichier(s) a traiter.\n{'='*50}")
             ok_count = 0
             err_count = 0
             for i, path in enumerate(paths):
                 name = os.path.basename(path)
-                self.after(0, self._setstatus, f"[{i+1}/{n}] Transcription : {name}", ACCENT2)
+                self.after(0, self._setstatus, f"[{i+1}/{n}] {name}", ACCENT2)
                 self.after(0, self._log, f"\n[{i+1}/{n}] {name}")
                 try:
-                    opts = {}
-                    if lang != "Auto": opts["language"] = lang
-                    result = model.transcribe(path, **opts)
-                    text = result.get("text", "").strip()
-                    # Sauvegarde automatique .txt au meme endroit
-                    txt_path = os.path.splitext(path)[0] + ".txt"
-                    with open(txt_path, "w", encoding="utf-8") as f:
-                        f.write(text)
-                    words = len(text.split())
-                    self.after(0, self._log, f"  OK  {words} mots → {os.path.basename(txt_path)}")
+                    working_path = path
+                    is_video = os.path.splitext(path)[1].lower() in VIDEO_EXT
+                    if do_extract and is_video:
+                        self.after(0, self._log, "  Extraction audio...")
+                        working_path = self._extract_audio(path)
+                        self.after(0, self._log, f"  Audio extrait -> {os.path.basename(working_path)}")
+                    elif do_extract and not is_video:
+                        self.after(0, self._log, "  Deja un fichier audio, extraction ignoree.")
+                    if do_transcribe:
+                        opts = {}
+                        if lang != "Auto": opts["language"] = lang
+                        result = model.transcribe(working_path, **opts)
+                        text = result.get("text", "").strip()
+                        # Sauvegarde automatique .txt au meme endroit que le fichier original
+                        txt_path = os.path.splitext(path)[0] + ".txt"
+                        with open(txt_path, "w", encoding="utf-8") as f:
+                            f.write(text)
+                        words = len(text.split())
+                        self.after(0, self._log, f"  OK  {words} mots -> {os.path.basename(txt_path)}")
                     ok_count += 1
                 except Exception as e:
                     self.after(0, self._log, f"  ERREUR : {e}")
@@ -261,18 +301,18 @@ class WhisperApp(BASE):
 
     def _batch_done(self, ok, err, total):
         self.is_running = False
-        self.btn.configure(state="normal", bg=ACCENT, fg="white", text="Lancer la transcription")
+        self.btn.configure(state="normal", bg=ACCENT, fg="white", text="Lancer")
         summary = f"\n{'='*50}\nBatch termine : {ok}/{total} reussis"
         if err: summary += f", {err} erreur(s)"
         self.after(0, self._log, summary)
         color = SUCCESS if err == 0 else WARNING
-        self._setstatus(f"Batch termine — {ok}/{total} fichiers transcrits.", color)
+        self._setstatus(f"Batch termine — {ok}/{total} fichiers traites.", color)
         self.stat_lbl.configure(fg=color)
 
     def _err(self, e):
         self.is_running = False
         self.prog.configure(value=0)
-        self.btn.configure(state="normal", bg=ACCENT, fg="white", text="Lancer la transcription")
+        self.btn.configure(state="normal", bg=ACCENT, fg="white", text="Lancer")
         self.after(0, self._log, f"ERREUR FATALE : {e}")
         self._setstatus("Une erreur est survenue.", WARNING)
         self.stat_lbl.configure(fg=WARNING)
